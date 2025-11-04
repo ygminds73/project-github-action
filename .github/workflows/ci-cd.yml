@@ -123,6 +123,3 @@ jobs:
         push: true
         tags: youngminds73/bankapp:latest
         file: ./Dockerfile        
-        
-      
-     
