@@ -1,5 +1,4 @@
 name: Java CI with Maven batch-29
-
 on:
   push:
     branches: [ "main" ]
