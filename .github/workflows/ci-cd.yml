@@ -29,7 +29,7 @@ jobs:
       run: mvn -B package --file pom.xml
 
   security-check:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     
     - uses: actions/checkout@v4
@@ -41,3 +41,45 @@ jobs:
          sudo apt-get update
          sudo apt-get install trivy
 
+
+    - name: Trivy for Scan
+      run: trivy fs --format table -o fs-report.json .
+
+    - name: Gitleaks installation
+      run: sudo apt install gitleaks -y
+
+    - name: Gitleaks Scanning of code  
+      run: gitleaks detect source . -r gitleaks-report.json -f json
+
+  test:
+    runs-on: self-hosted
+    needs: security-check
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: maven
+    - name: Unit Test Cases
+      run: mvn test
+
+  build_project_and_sonar_scan:
+    runs-on: self-hosted
+    needs: test
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: maven
+    - name: Build Project
+      run: mvn package
+    - name: Upload JAR artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-jar
+        path: target/*.jar   
