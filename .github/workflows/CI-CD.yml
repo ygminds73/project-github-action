@@ -41,3 +41,7 @@ jobs:
          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
          sudo apt-get update -y
          sudo apt-get install trivy -y
+
+    - name: Trivy for Scan
+      run: trivy fs --format table -o fs-report.json .
+         
