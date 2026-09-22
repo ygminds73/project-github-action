@@ -158,6 +158,15 @@ jobs:
           -Dsonar.token="$SONAR_TOKEN" \
           -Dsonar.nodejs.executable="$(command -v node)"
 
+    - name: Debug - show report-task.txt
+      run: |
+        echo "--- .scannerwork/report-task.txt ---"
+        cat .scannerwork/report-task.txt || echo "File not found"
+        echo "--- SONAR_HOST_URL used by this job ---"
+        echo "$SONAR_HOST_URL"
+      env:
+        SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
     - name: SonarQube Quality Gate check
       id: sonarqube-quality-gate-check
       # Pinned to a release instead of @master so upstream changes can't silently
