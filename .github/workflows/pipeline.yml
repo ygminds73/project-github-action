@@ -103,13 +103,16 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    # Gives the Sonar JS/TS analyzer a real Node.js. This still matters even though
-    # we no longer use the docker-based scan action below: the CLI itself needs
-    # Node on PATH to analyze JS/TS/CSS files.
+    # Bumped from Node 20 to 22 (current Active LTS): the sonar-javascript
+    # plugin on this SonarQube server rejected 20.20.2 as unsupported even
+    # though it's above Sonar's documented 20.12.0 floor for the v20 line -
+    # the server's plugin build appears to require the v22 LTS line now
+    # (22.11.0+). Using the current LTS sidesteps having to chase the exact
+    # minor-version cutoff by hand.
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '22'
 
     - name: Build Project
       run: mvn package
