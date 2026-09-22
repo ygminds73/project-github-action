@@ -129,27 +129,26 @@ jobs:
     # "-Dsonar.nodejs.executable=$(which node)" didn't help: $(which node) also
     # never gets shell-expanded inside a literal `args:` string in the first place.
     # Running sonar-scanner directly on the runner avoids the isolation entirely.
+    # v5.0.1 didn't support engine-side JRE auto-provisioning (only added in CLI 6.0+),
+    # so the whole scanner ran inside whatever JVM launched it - which was still
+    # Java 17, hence "Java 17 is not supported" even with JAVA_HOME unset.
+    # The linux-x64 build of 8.1 bundles its own Java 21 JRE, so the launcher
+    # and the analysis engine both run on Java 21 with zero dependency on the
+    # host's Java version - no JAVA_HOME juggling needed at all.
     - name: Install SonarScanner CLI
       run: |
         if ! command -v sonar-scanner >/dev/null 2>&1; then
           curl -sSLo sonar-scanner-cli.zip \
-            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip"
+            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.1.0.6389-linux-x64.zip"
           unzip -q -o sonar-scanner-cli.zip
-          echo "$PWD/sonar-scanner-5.0.1.3006-linux/bin" >> "$GITHUB_PATH"
+          echo "$PWD/sonar-scanner-8.1.0.6389-linux-x64/bin" >> "$GITHUB_PATH"
         fi
 
-    # The sonar-scanner CLI needs Java 21+ to run itself - separate from the
-    # Java 17 used to compile the project above. actions/setup-java sets
-    # JAVA_HOME to that JDK 17, and the scanner picks it up and refuses to run
-    # on it. Unsetting JAVA_HOME here (just for this step) lets the scanner
-    # fall back to its own JRE auto-provisioning instead, which downloads a
-    # supported JRE automatically. No local Java 21 install needed.
     - name: SonarQube Scan
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
       run: |
-        unset JAVA_HOME
         sonar-scanner \
           -Dsonar.host.url="$SONAR_HOST_URL" \
           -Dsonar.token="$SONAR_TOKEN" \
