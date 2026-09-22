@@ -138,11 +138,18 @@ jobs:
           echo "$PWD/sonar-scanner-5.0.1.3006-linux/bin" >> "$GITHUB_PATH"
         fi
 
+    # The sonar-scanner CLI needs Java 21+ to run itself - separate from the
+    # Java 17 used to compile the project above. actions/setup-java sets
+    # JAVA_HOME to that JDK 17, and the scanner picks it up and refuses to run
+    # on it. Unsetting JAVA_HOME here (just for this step) lets the scanner
+    # fall back to its own JRE auto-provisioning instead, which downloads a
+    # supported JRE automatically. No local Java 21 install needed.
     - name: SonarQube Scan
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
       run: |
+        unset JAVA_HOME
         sonar-scanner \
           -Dsonar.host.url="$SONAR_HOST_URL" \
           -Dsonar.token="$SONAR_TOKEN" \
