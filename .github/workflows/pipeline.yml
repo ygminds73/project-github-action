@@ -103,9 +103,9 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    # Added: gives the Sonar JS/TS analyzer a real Node.js instead of falling back
-    # to its embedded runtime, which is a common source of unexplained exit-code-3
-    # failures on self-hosted runners (stale/corrupted embedded download, memory limits, etc.)
+    # Gives the Sonar JS/TS analyzer a real Node.js. This still matters even though
+    # we no longer use the docker-based scan action below: the CLI itself needs
+    # Node on PATH to analyze JS/TS/CSS files.
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
@@ -122,14 +122,31 @@ jobs:
     - name: Build and download dependencies
       run: mvn dependency:copy-dependencies -DoutputDirectory=target/dependency
 
+    # Replaced SonarSource/sonarqube-scan-action with a direct CLI install + run.
+    # That action is a *Docker container action* - it executes inside its own
+    # container, isolated from this runner's PATH, so the Node.js installed by
+    # setup-node above (and any host tools) are invisible to it. That's why
+    # "-Dsonar.nodejs.executable=$(which node)" didn't help: $(which node) also
+    # never gets shell-expanded inside a literal `args:` string in the first place.
+    # Running sonar-scanner directly on the runner avoids the isolation entirely.
+    - name: Install SonarScanner CLI
+      run: |
+        if ! command -v sonar-scanner >/dev/null 2>&1; then
+          curl -sSLo sonar-scanner-cli.zip \
+            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip"
+          unzip -q -o sonar-scanner-cli.zip
+          echo "$PWD/sonar-scanner-5.0.1.3006-linux/bin" >> "$GITHUB_PATH"
+        fi
+
     - name: SonarQube Scan
-      uses: SonarSource/sonarqube-scan-action@v5.0.0
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-      with:
-        args: >
-          -Dsonar.nodejs.executable=$(which node)
+      run: |
+        sonar-scanner \
+          -Dsonar.host.url="$SONAR_HOST_URL" \
+          -Dsonar.token="$SONAR_TOKEN" \
+          -Dsonar.nodejs.executable="$(command -v node)"
 
     - name: SonarQube Quality Gate check
       id: sonarqube-quality-gate-check
