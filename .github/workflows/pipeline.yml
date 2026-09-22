@@ -5,7 +5,6 @@ on:
 jobs:
   build:
     runs-on: self-hosted
-    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
     - name: Set up JDK 17
@@ -14,7 +13,7 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
         cache: maven
-    - name: Resolve Dependencies
+    - name: Resolve Dependencies          # ✅ Added: populate local Maven cache
       run: mvn dependency:resolve
     - name: Build with Maven
       run: mvn -B package --file pom.xml
@@ -22,18 +21,17 @@ jobs:
   security-check:
     runs-on: self-hosted
     needs: build
-    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up JDK 17
+    - name: Set up JDK 17                 # ✅ Added: restore Maven cache
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
         cache: maven
 
-    - name: Resolve Dependencies
+    - name: Resolve Dependencies          # ✅ Added: ensure cache is warm
       run: mvn dependency:resolve
 
     - name: Trivy Installation
@@ -44,7 +42,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y trivy
 
-    - name: Trivy Scan
+    - name: Trivy Scan                    # ✅ Added: vuln only, skip secret to avoid Maven calls
       run: trivy fs --scanners vuln --format table -o fs-report.txt .
 
     - name: Upload Trivy Report
@@ -56,29 +54,12 @@ jobs:
     - name: Gitleaks installation
       run: sudo apt install gitleaks -y
 
-    # Fixed: gitleaks uses flags, not positional args like "source"
-    # --no-git treats the checkout as a plain filesystem scan rather than walking git history
-    # "|| true" so a leak finding doesn't hard-fail the job before you've reviewed the report;
-    # remove it once you want leaks to actually block the pipeline
-    - name: Gitleaks Scanning of code
-      run: |
-        gitleaks detect \
-          --source . \
-          --no-git \
-          --report-path gitleaks-report.json \
-          --report-format json \
-          -v || true
-
-    - name: Upload Gitleaks Report
-      uses: actions/upload-artifact@v4
-      with:
-        name: gitleaks-report
-        path: gitleaks-report.json
+    - name: Gitleaks Scanning of code  
+      run: gitleaks detect source . -r gitleaks-report.json -f json   
 
   test:
     runs-on: self-hosted
     needs: security-check
-    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
     - name: Set up JDK 17
@@ -93,7 +74,6 @@ jobs:
   build_project_and_sonar_scan:
     runs-on: self-hosted
     needs: test
-    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
     - name: Set up JDK 17
@@ -102,18 +82,6 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
         cache: maven
-
-    # Bumped from Node 20 to 22 (current Active LTS): the sonar-javascript
-    # plugin on this SonarQube server rejected 20.20.2 as unsupported even
-    # though it's above Sonar's documented 20.12.0 floor for the v20 line -
-    # the server's plugin build appears to require the v22 LTS line now
-    # (22.11.0+). Using the current LTS sidesteps having to chase the exact
-    # minor-version cutoff by hand.
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-
     - name: Build Project
       run: mvn package
     - name: Upload JAR artifact
@@ -123,73 +91,34 @@ jobs:
         path: target/*.jar
 
     - name: Build and download dependencies
-      run: mvn dependency:copy-dependencies -DoutputDirectory=target/dependency
-
-    # Replaced SonarSource/sonarqube-scan-action with a direct CLI install + run.
-    # That action is a *Docker container action* - it executes inside its own
-    # container, isolated from this runner's PATH, so the Node.js installed by
-    # setup-node above (and any host tools) are invisible to it. That's why
-    # "-Dsonar.nodejs.executable=$(which node)" didn't help: $(which node) also
-    # never gets shell-expanded inside a literal `args:` string in the first place.
-    # Running sonar-scanner directly on the runner avoids the isolation entirely.
-    # v5.0.1 didn't support engine-side JRE auto-provisioning (only added in CLI 6.0+),
-    # so the whole scanner ran inside whatever JVM launched it - which was still
-    # Java 17, hence "Java 17 is not supported" even with JAVA_HOME unset.
-    # The linux-x64 build of 8.1 bundles its own Java 21 JRE, so the launcher
-    # and the analysis engine both run on Java 21 with zero dependency on the
-    # host's Java version - no JAVA_HOME juggling needed at all.
-    - name: Install SonarScanner CLI
-      run: |
-        if ! command -v sonar-scanner >/dev/null 2>&1; then
-          curl -sSLo sonar-scanner-cli.zip \
-            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.1.0.6389-linux-x64.zip"
-          unzip -q -o sonar-scanner-cli.zip
-          echo "$PWD/sonar-scanner-8.1.0.6389-linux-x64/bin" >> "$GITHUB_PATH"
-        fi
+      run: mvn dependency:copy-dependencies -DoutputDirectory=target/dependency    
 
     - name: SonarQube Scan
+      uses: SonarSource/sonarqube-scan-action@v5.0.0 # Ex: v8.1.0, See the latest version at https://github.com/marketplace/actions/official-sonarqube-scan
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-      run: |
-        sonar-scanner \
-          -X \
-          -Dsonar.host.url="$SONAR_HOST_URL" \
-          -Dsonar.token="$SONAR_TOKEN" \
-          -Dsonar.nodejs.executable="$(command -v node)"
-
-    - name: Debug - show report-task.txt
-      run: |
-        echo "--- .scannerwork/report-task.txt ---"
-        cat .scannerwork/report-task.txt || echo "File not found"
-        echo "--- SONAR_HOST_URL used by this job ---"
-        echo "$SONAR_HOST_URL"
-      env:
-        SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-
+        
     - name: SonarQube Quality Gate check
       id: sonarqube-quality-gate-check
-      # Pinned to a release instead of @master so upstream changes can't silently
-      # break this step on a future run
-      uses: sonarsource/sonarqube-quality-gate-action@v1.1.0
+      uses: sonarsource/sonarqube-quality-gate-action@master
       with:
         pollingTimeoutSec: 600
       env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-
-  build_docker_image_and_push:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }} 
+        
+  buils_docker_image_and_push:
     runs-on: self-hosted
     needs: build_project_and_sonar_scan
-    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
     - name: Download JAR artifact
       uses: actions/download-artifact@v4
       with:
         name: app-jar
-        path: app
-
+        path: app  # this will download JAR to ./app folder
+        
     - name: Login to Docker Hub
       uses: docker/login-action@v3
       with:
@@ -204,17 +133,12 @@ jobs:
       with:
         context: .
         push: true
-        # Tagging with the commit SHA alongside "latest" so you can trace which
-        # build produced a given running image
-        tags: |
-          youngminds73/bankapp:latest
-          youngminds73/bankapp:${{ github.sha }}
+        tags: youngminds73/bankapp:latest
         file: ./Dockerfile
 
   deploy_to_kubernetes:
     runs-on: self-hosted
-    needs: build_docker_image_and_push
-    timeout-minutes: 15
+    needs: buils_docker_image_and_push
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
@@ -234,11 +158,9 @@ jobs:
       with:
         version: latest
     - name: Configure kubeconfig
-      # printf avoids shell interpretation issues (backslashes, %, etc.) that
-      # "echo" can mangle depending on the shell/secret contents
       run: |
         mkdir -p $HOME/.kube
-        printf '%s\n' "${{ secrets.EKS_KUBECONFIG }}" > $HOME/.kube/config
+        echo "${{ secrets.EKS_KUBECONFIG }}" > $HOME/.kube/config
     - name: Deploy to EKS
       run: |
         kubectl apply -f ds.yml
